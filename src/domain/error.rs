@@ -3,5 +3,7 @@ pub enum APIError {
     FailedToOpen,
     FailedToRead,
     FailedToParseDate,
+    SchemaParseErr(Vec<String>),
+    DataSchemaCheckErr(String),
     UnexpectedError,
 }

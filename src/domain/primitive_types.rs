@@ -1,4 +1,19 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct SchemaInfo {
+    pub header_name: String,
+    pub data_type: PrimType,
+}
+
+impl SchemaInfo {
+    pub fn new(header_name: String, data_type: PrimType) -> Self {
+        Self {
+            header_name,
+            data_type,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum PrimType {
     String,
     Int,
@@ -18,4 +33,18 @@ pub enum PrimTypeData {
     DateTime(chrono::NaiveDateTime),
     Empty,
     UnexpectedError,
+}
+
+impl PrimTypeData {
+    pub fn kind(&self) -> PrimType {
+        match self {
+            PrimTypeData::String(_) => PrimType::String,
+            PrimTypeData::Int(_) => PrimType::Int,
+            PrimTypeData::Float(_) => PrimType::Float,
+            PrimTypeData::Bool(_) => PrimType::Bool,
+            PrimTypeData::DateTime(_) => PrimType::DateTime,
+            PrimTypeData::Empty => PrimType::Empty,
+            PrimTypeData::UnexpectedError => PrimType::UnexpectedError,
+        }
+    }
 }
