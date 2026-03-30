@@ -1,33 +1,44 @@
-use crate::{domain::data_stores::DBReader};
-use crate::domain::{APIError, PrimType, PrimTypeData, SchemaInfo};
-
 use calamine::{Data, Reader, Xlsx, open_workbook};
+
+use crate::{domain::data_stores::DBReader};
+use crate::domain::{APIError, Cell, PrimType, PrimTypeData, SchemaInfo};
+
+#[derive(Debug)]
+pub struct ExcelReaderBuilder {
+    pub db: String,
+    pub sheet: String,
+}
 
 #[derive(Debug, Default)]
 pub struct ExcelReader {
-    pub headers: Vec<String>,
-    pub data: Vec<Vec<CellInfo>>,
-    pub data_size: (usize, usize),
-    pub schema: Vec<SchemaInfo>,
+    db: String,
+    sheet: String,
+    headers: Vec<String>,
+    data: Vec<Vec<Cell>>,
+    data_size: (usize, usize),
+    schema: Vec<SchemaInfo>,
+    has_merged_cells: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct CellInfo {
-    data: Result<PrimTypeData, APIError>,
-    cell_address: (usize, usize),
-
+impl ExcelReaderBuilder {
+    pub fn parse(db: String, sheet: String) -> ExcelReader {
+        ExcelReader {
+            db,
+            sheet,
+            ..Default::default()
+        }
+    }
 }
 
 impl DBReader for ExcelReader {
-    fn read_db(&mut self, path: String, table: String) -> Result<(), APIError> {
-        let mut workbook: Xlsx<_> = open_workbook(path)
+    fn read_db(&mut self) -> Result<(), APIError> {
+        let mut workbook: Xlsx<_> = open_workbook(self.db.clone())
             .map_err(|_| APIError::FailedToOpen)?;
         
-        let range = workbook.worksheet_range(&table)
+        let range = workbook.worksheet_range(&self.sheet)
             .map_err(|_| APIError::FailedToRead)?;
 
-        let row_count = range.get_size().0;
-        let col_count = range.get_size().1;
+        let (row_count, col_count) = range.get_size();
 
         let headers = range.headers()
             .ok_or(APIError::UnexpectedError)?;
@@ -71,7 +82,7 @@ impl DBReader for ExcelReader {
                     Data::String(val) => Ok(PrimTypeData::String(val.to_owned())),
                 };
 
-                cells.push(CellInfo{
+                cells.push(Cell{
                     data: cell_data,
                     cell_address: (ii, jj),
                 });
@@ -85,73 +96,65 @@ impl DBReader for ExcelReader {
             rows.remove(0);
         }
 
-        // Get schema of data from first row
-        let mut schema = Vec::new();
-
-        let first_row = rows[0].clone();
-
-        for (index, col) in first_row.iter().enumerate() {
-            let header_name = headers[index].clone();
-            match col.data {
-                Ok(PrimTypeData::Bool(_)) =>  schema.push(SchemaInfo::new(header_name, PrimType::Bool)),
-                Ok(PrimTypeData::DateTime(_)) =>  schema.push(SchemaInfo::new(header_name, PrimType::DateTime)),
-                Ok(PrimTypeData::Empty) =>  schema.push(SchemaInfo::new(header_name, PrimType::Empty)),
-                Ok(PrimTypeData::UnexpectedError) =>  schema.push(SchemaInfo::new(header_name, PrimType::UnexpectedError)),
-                Ok(PrimTypeData::Float(_)) =>  schema.push(SchemaInfo::new(header_name, PrimType::Float)),
-                Ok(PrimTypeData::Int(_)) =>  schema.push(SchemaInfo::new(header_name, PrimType::Int)),
-                Ok(PrimTypeData::String(_)) => schema.push(SchemaInfo::new(header_name, PrimType::String)),
-                _ => schema.push(SchemaInfo::new(header_name, PrimType::UnexpectedError)),
-            }
+        if rows.is_empty() {
+            return Err(APIError::NoData)
         }
+
+        // Determine schema from the first row
+        let schema = parse_shema(&headers, rows[0].clone())?;
         
         self.headers = headers;
         self.data = rows;
         self.data_size = (row_count, col_count);
         self.schema = schema;
-        Ok(())
-    }
-
-    fn is_schema_ok(&self) -> Result<bool, APIError> {
-        let mut is_ok = true;
-        let mut headers_with_err = vec![];
-
-        for schema_info in &self.schema {
-            if schema_info.data_type == PrimType::UnexpectedError {
-                is_ok = false;
-                headers_with_err.push(schema_info.header_name.clone());
-            }
-        }
-
-        if headers_with_err.is_empty() {
-            Ok(is_ok)
-        } else {
-            Err(APIError::SchemaParseErr(headers_with_err))
-        }
-    }
-
-    fn check_against_schema(&self, schema: &Vec<SchemaInfo>) -> Result<(), APIError> {
-        // TODO: This check should be able to perform a partial check if length of schema and data aren't equal
-        // If schema header and data header are in different order this should get corresponding index of both arrays
-        // If data has more or less headers it should report out the discrepancy, but compare what is available
-        if schema.len() != self.data_size.1 {
-            return Err(APIError::DataSchemaCheckErr("Schema length and data lenth are not equal".to_owned()))
-        }
-
-        let mut mismatch = "".to_owned();
-
-        for row in &self.data {
-            for (index, cell) in row.iter().enumerate() {                                
-                if let Ok(cell_data) = &cell.data && cell_data.kind() != schema[index].data_type {
-                    mismatch.push_str(&format!("Cell: ({}, {}) - Data: {:?} - Schema: {:?}\n", cell.cell_address.0, cell.cell_address.0, cell_data, schema[index]));
-                }
-            }
-        }
-
-        if !mismatch.is_empty() {
-            println!("{mismatch}");
-            return Err(APIError::DataSchemaCheckErr(mismatch))
-        }
 
         Ok(())
     }
+
+    fn get_schema(&self) -> &Vec<SchemaInfo> {
+        &self.schema
+    }
+
+    fn get_data(&self) -> &Vec<Vec<Cell>> {
+        &self.data
+    }
+
+    fn get_headers(&self) -> &Vec<String> {
+        &self.headers
+    }
+}
+
+fn parse_shema(header: &[String], row: Vec<Cell>) -> Result<Vec<SchemaInfo>, APIError> {
+    let mut schema = Vec::new();
+
+    let mut schema_is_ok = true;
+    let mut headers_with_err = vec![];
+
+    for (index, col) in row.iter().enumerate() {
+        let header_name = header[index].clone();
+        match col.data {
+            Ok(PrimTypeData::Bool(_)) =>  schema.push(SchemaInfo::new(header_name, PrimType::Bool)),
+            Ok(PrimTypeData::DateTime(_)) =>  schema.push(SchemaInfo::new(header_name, PrimType::DateTime)),
+            Ok(PrimTypeData::Empty) =>  schema.push(SchemaInfo::new(header_name, PrimType::Empty)),
+            Ok(PrimTypeData::Float(_)) =>  schema.push(SchemaInfo::new(header_name, PrimType::Float)),
+            Ok(PrimTypeData::Int(_)) =>  schema.push(SchemaInfo::new(header_name, PrimType::Int)),
+            Ok(PrimTypeData::String(_)) => schema.push(SchemaInfo::new(header_name, PrimType::String)),
+            Ok(PrimTypeData::UnexpectedError) =>  {
+                schema_is_ok = false;
+                headers_with_err.push(header_name.clone());
+                schema.push(SchemaInfo::new(header_name, PrimType::UnexpectedError))
+            },
+            Err(_) => {
+                schema_is_ok = false;
+                headers_with_err.push(header_name.clone());
+                schema.push(SchemaInfo::new(header_name, PrimType::UnexpectedError))
+            },
+        }
+    }
+
+    if !schema_is_ok {
+        return Err(APIError::SchemaParseErr(headers_with_err))
+    } 
+
+    Ok(schema)
 }

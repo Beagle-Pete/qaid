@@ -5,5 +5,6 @@ pub enum APIError {
     FailedToParseDate,
     SchemaParseErr(Vec<String>),
     DataSchemaCheckErr(String),
+    NoData,
     UnexpectedError,
 }

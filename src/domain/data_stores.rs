@@ -1,9 +1,12 @@
-use crate::domain::{APIError, SchemaInfo};
+use crate::domain::{APIError, Cell, SchemaInfo};
 
 pub trait DBReader {
-    fn read_db(&mut self, path: String, table: String) -> Result<(), APIError>;
+    fn read_db(&mut self) -> Result<(), APIError>;
 
-    fn is_schema_ok(&self) -> Result<bool, APIError>;
+    fn get_schema(&self) -> &Vec<SchemaInfo>;
 
-    fn check_against_schema(&self, schema: &Vec<SchemaInfo>) -> Result<(), APIError>;
+    fn get_data(&self) -> &Vec<Vec<Cell>>;
+    
+    fn get_headers(&self) -> &Vec<String>;
+    
 }
