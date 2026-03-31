@@ -24,7 +24,7 @@ pub enum PrimType {
     UnexpectedError,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PrimTypeData {
     String(String),
     Int(i64),

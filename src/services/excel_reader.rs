@@ -102,6 +102,8 @@ impl DBReader for ExcelReader {
 
         // Determine schema from the first row
         let schema = parse_shema(&headers, rows[0].clone())?;
+
+        // TODO: check for merged cells
         
         self.headers = headers;
         self.data = rows;
