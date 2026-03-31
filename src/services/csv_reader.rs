@@ -2,8 +2,14 @@ use std::fs::File;
 
 use csv::{Reader, StringRecord};
 
-use crate::{domain::data_stores::DBReader};
-use crate::domain::{APIError, Cell, PrimType, PrimTypeData, SchemaInfo};
+use crate::domain::{
+    APIError,
+    Cell,
+    data_stores::DBReader,
+    PrimType,
+    PrimTypeData,
+    SchemaInfo,
+};
 
 #[derive(Debug)]
 pub struct CsvReaderBuilder {

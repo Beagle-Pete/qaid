@@ -48,3 +48,17 @@ impl PrimTypeData {
         }
     }
 }
+
+impl std::fmt::Display for PrimTypeData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PrimTypeData::String(val) => write!(f, "{}", val),
+            PrimTypeData::Int(val) => write!(f, "{}", val),
+            PrimTypeData::Float(val) => write!(f, "{}", val),
+            PrimTypeData::Bool(val) => write!(f, "{}", val),
+            PrimTypeData::DateTime(val) => write!(f, "{}", val),
+            PrimTypeData::Empty => write!(f, ""),
+            PrimTypeData::UnexpectedError => write!(f, ""),
+        }        
+    }
+}
