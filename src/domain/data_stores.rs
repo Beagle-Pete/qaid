@@ -1,4 +1,6 @@
-use crate::domain::{APIError, Cell, SchemaInfo};
+use std::collections::HashMap;
+
+use crate::domain::{APIError, Cell, ReportError, ReportInfo, SchemaInfo};
 
 pub trait DBReader {
     fn read_db(&mut self) -> Result<(), APIError>;
@@ -6,7 +8,13 @@ pub trait DBReader {
     fn get_schema(&self) -> &Vec<SchemaInfo>;
 
     fn get_data(&self) -> &Vec<Vec<Cell>>;
+
+    fn get_data_at(&self, row: usize, col: usize) -> Option<&Cell>;
     
     fn get_headers(&self) -> &Vec<String>;
+
+    fn add_issue(&mut self, error_type: ReportError, error_info: ReportInfo);
+
+    fn get_issues(&self) -> &HashMap<ReportError, Vec<ReportInfo>>;
     
 }

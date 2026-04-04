@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::collections::HashMap;
 
 use csv::{Reader, StringRecord};
 
@@ -8,28 +9,31 @@ use crate::domain::{
     data_stores::DBReader,
     PrimType,
     PrimTypeData,
+    ReportError,
+    ReportInfo,
     SchemaInfo,
 };
 
 #[derive(Debug)]
 pub struct CsvReaderBuilder {
-    pub db: String,
+    pub file_path: String,
 }
 
 #[derive(Debug, Default)]
 pub struct CsvReader {
-    db: String,
+    file: String,
     headers: Vec<String>,
     data: Vec<Vec<Cell>>,
     data_size: (usize, usize),
     schema: Vec<SchemaInfo>,
     has_merged_cells: bool,
+    report: HashMap<ReportError, Vec<ReportInfo>>,
 }
 
 impl CsvReaderBuilder {
-    pub fn parse(db: String) -> CsvReader {
+    pub fn parse(file: String) -> CsvReader {
         CsvReader {
-            db,
+            file,
             ..Default::default()
         }
     }
@@ -37,7 +41,7 @@ impl CsvReaderBuilder {
 
 impl DBReader for CsvReader {
     fn read_db(&mut self) -> Result<(), APIError> {
-        let file = File::open(&self.db)
+        let file = File::open(&self.file)
             .map_err(|_| APIError::FailedToOpen)?;
         let mut rdr = Reader::from_reader(file);
 
@@ -60,7 +64,7 @@ impl DBReader for CsvReader {
             let mut row_data2 = vec![];
             for (jj, col) in row_data.iter().enumerate() {
                 let cell = Cell::new(
-                    Ok(PrimTypeData::String(col.to_owned())), 
+                    PrimTypeData::String(col.to_owned()), 
                     (ii, jj)
                 );
                 row_data2.push(cell);
@@ -73,18 +77,20 @@ impl DBReader for CsvReader {
         }
 
         // Get schema. Schema for .csv file will be all Strings
-        let schema = headers.iter()
+        let schema: Vec<SchemaInfo> = headers.iter()
             .map(|header| SchemaInfo::new(header.to_owned(), PrimType::String))
             .collect();
 
         let row_count = data.len();
         let col_count = headers.len();
 
+
         self.headers = headers;
         self.data = data;
         self.data_size = (row_count, col_count);
         self.schema = schema;
         self.has_merged_cells = false;
+
         Ok(())
     }
 
@@ -96,10 +102,26 @@ impl DBReader for CsvReader {
         &self.data
     }
     
+    fn get_data_at(&self, row: usize, col: usize) -> Option<&Cell> {
+        self.data
+            .get(row)?
+            .get(col)
+    }
+    
     fn get_headers(&self) -> &Vec<String> {
         &self.headers
     }
 
+    fn add_issue(&mut self, error_type: ReportError, error_info: ReportInfo) {
+        self.report
+            .entry(error_type)
+            .or_default()
+            .push(error_info);
+    }
+
+    fn get_issues(&self) -> &HashMap<ReportError, Vec<ReportInfo>> {
+        &self.report
+    }
 }
 
 fn record_to_vec(record: &StringRecord) -> Vec<String> {
@@ -121,7 +143,7 @@ mod tests {
 
         assert_eq!(csv_file.data_size, (4, 3));
 
-        assert_eq!(csv_file.data[0][1].data, Ok(PrimTypeData::String("String1".to_owned())));
+        assert_eq!(csv_file.data[0][1].data, PrimTypeData::String("String1".to_owned()));
         assert_eq!(csv_file.data[0][1].cell_address, (0, 1));
 
         assert!(!csv_file.has_merged_cells);

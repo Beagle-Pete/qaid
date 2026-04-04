@@ -14,8 +14,8 @@ pub fn check_against_schema(data: &Vec<Vec<Cell>>, schema: &[SchemaInfo]) -> Res
 
     for row in data {
         for (index, cell) in row.iter().enumerate() {                                
-            if let Ok(cell_data) = &cell.data && cell_data.kind() != schema[index].data_type {
-                mismatch.push_str(&format!("Cell: ({}, {}) - Data: {:?} - Schema: {:?}\n", cell.cell_address.0, cell.cell_address.0, cell_data, schema[index]));
+            if cell.data.kind() != schema[index].data_type {
+                mismatch.push_str(&format!("Cell: ({}, {}) - Data: {:?} - Schema: {:?}\n", cell.cell_address.0, cell.cell_address.0, cell.data, schema[index]));
             }
         }
     }

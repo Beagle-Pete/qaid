@@ -1,13 +1,13 @@
 use crate::domain::{APIError, PrimTypeData};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Cell {
-    pub data: Result<PrimTypeData, APIError>,
+    pub data: PrimTypeData,
     pub cell_address: (usize, usize),
 }
 
 impl Cell {
-    pub fn new(data: Result<PrimTypeData, APIError>, cell_address: (usize, usize)) -> Self {
+    pub fn new(data: PrimTypeData, cell_address: (usize, usize)) -> Self {
         Self {
             data,
             cell_address,
