@@ -7,5 +7,6 @@ pub enum APIError {
     SchemaParseErr(Vec<String>),
     DataSchemaCheckErr(String),
     NoData,
+    EmptyFile,
     UnexpectedError,
 }

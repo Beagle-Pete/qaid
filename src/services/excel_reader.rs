@@ -45,8 +45,12 @@ impl DBReader for ExcelReader {
         let range = workbook
             .with_header_row(HeaderRow::FirstNonEmptyRow)
             .worksheet_range(&self.sheet)
-            .map_err(|_| APIError::FailedToRead)?;        
-        
+            .map_err(|_| APIError::FailedToRead)?;
+
+        if range.height() == 0_usize {
+            return Err(APIError::EmptyFile)
+        }
+
         let headers = range.headers()
         .ok_or(APIError::UnexpectedError)?;
 
@@ -433,9 +437,16 @@ mod tests {
     }
 
     #[test]
-    fn empty_table_should_return_err() {
+    fn file_without_data_should_return_err() {
         let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_No_Data.xlsx".to_owned(), "Sheet1".to_owned());
         
         assert_eq!(excel_file.read_db(), Err(APIError::NoData));
+    }
+
+    #[test]
+    fn empty_table_should_return_err() {
+        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Empty.xlsx".to_owned(), "Sheet1".to_owned());
+        
+        assert_eq!(excel_file.read_db(), Err(APIError::EmptyFile));
     }
 }
