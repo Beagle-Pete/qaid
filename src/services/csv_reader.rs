@@ -26,7 +26,6 @@ pub struct CsvReader {
     data: Vec<Vec<Cell>>,
     data_size: (usize, usize),
     schema: Vec<SchemaInfo>,
-    has_merged_cells: bool,
     report: HashMap<ReportError, Vec<ReportInfo>>,
 }
 
@@ -89,7 +88,6 @@ impl DBReader for CsvReader {
         self.data = data;
         self.data_size = (row_count, col_count);
         self.schema = schema;
-        self.has_merged_cells = false;
 
         Ok(())
     }
@@ -145,8 +143,6 @@ mod tests {
 
         assert_eq!(csv_file.data[0][1].data, PrimTypeData::String("String1".to_owned()));
         assert_eq!(csv_file.data[0][1].cell_address, (0, 1));
-
-        assert!(!csv_file.has_merged_cells);
     }
 
     #[test]

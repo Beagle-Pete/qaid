@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn successful_excel_read() {
-        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Table01.xlsx".to_owned(), "Sheet1".to_owned());
+        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Normal_01.xlsx".to_owned(), "Sheet1".to_owned());
         excel_file.read_db().unwrap();
 
         assert_eq!(excel_file.headers, ["PID", "Impressions", "Placements", "DateTime", "Boolean"]);
