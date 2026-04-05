@@ -134,6 +134,7 @@ impl DBReader for ExcelReader {
         // Determine schema from the first row
         let schema = parse_shema(&headers, rows[0].clone())?;
 
+        // Get merged cells
         workbook.merged_regions_by_sheet(&self.sheet).iter()
             .for_each(|(_, _, dimensions)| {
                 let (row_start, col_start) = dimensions.start;
@@ -144,9 +145,8 @@ impl DBReader for ExcelReader {
                 let row_end = row_end - 1;
                 let end = (row_end as usize, col_end as usize);
 
-                // let val = "tt".to_owned();
                 let val = rows[start.0][start.1].data.to_string();
-                let context = format!("Merged cell from {},{} to {},{}", start.0, start.1, end.0, end.1);
+                let context = format!("Merged cell at ({},{}) to ({},{})", start.0, start.1, end.0, end.1);
                 self.add_issue(ReportError::MergedCells, ReportInfo::new(start, end, val, context))
             });
         
