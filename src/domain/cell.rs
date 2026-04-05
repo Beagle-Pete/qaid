@@ -1,4 +1,4 @@
-use crate::domain::{APIError, PrimTypeData};
+use crate::domain::PrimTypeData;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cell {

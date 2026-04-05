@@ -2,15 +2,17 @@
 pub enum ReportError {
     FailedToParse,
     MergedCells,
+    EmptyCell,
     CustomRule(String),
+    UnexpectedError,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReportInfo {
-    start: (usize, usize),
-    end: (usize, usize),
-    val: String,
-    context: String,
+    pub start: (usize, usize),
+    pub end: (usize, usize),
+    pub val: String,
+    pub context: String,
 }
 
 impl ReportInfo {

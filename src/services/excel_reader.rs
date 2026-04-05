@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use calamine::{Data, HeaderRow, Reader, Xlsx, open_workbook};
+use calamine::{Cell as CalCell, CellType, Range};
 use chrono::{Duration, NaiveDateTime, NaiveDate, NaiveTime};
 
 use crate::{domain::data_stores::DBReader};
@@ -20,7 +21,6 @@ pub struct ExcelReader {
     data: Vec<Vec<Cell>>,
     data_size: (usize, usize),
     schema: Vec<SchemaInfo>,
-    has_merged_cells: bool,
     report: HashMap<ReportError, Vec<ReportInfo>>,
 }
 
@@ -29,7 +29,6 @@ impl ExcelReaderBuilder {
         ExcelReader {
             db,
             sheet,
-            // report: HashMap::new()
             ..Default::default()
         }
     }
@@ -40,25 +39,31 @@ impl DBReader for ExcelReader {
         let mut workbook: Xlsx<_> = open_workbook(self.db.clone())
             .map_err(|_| APIError::FailedToOpen)?;
         
+        workbook.load_merged_regions()
+            .map_err(|_| APIError::FailedToRead)?;
+        
         let range = workbook
             .with_header_row(HeaderRow::FirstNonEmptyRow)
             .worksheet_range(&self.sheet)
-            .map_err(|_| APIError::FailedToRead)?;
-
-        let (row_count_with_header, col_count) = range.get_size();
-
+            .map_err(|_| APIError::FailedToRead)?;        
+        
         let headers = range.headers()
-            .ok_or(APIError::UnexpectedError)?;
+        .ok_or(APIError::UnexpectedError)?;
 
-        let mut rows= Vec::with_capacity(row_count_with_header);
+        // Remove header from Range
+        let range = remove_row(&range, 0);
+    
+        let (row_count, col_count) = range.get_size();
+        let mut rows= Vec::with_capacity(row_count);
         
         // Iterate through rows. Skips first row with headers
-        for (ii, row) in range.rows().enumerate().skip(1) {
+        for (ii, row) in range.rows().enumerate() {
 
             // Iterate through columns
             let mut cells = Vec::with_capacity(col_count);
             for (jj, cell) in row.iter().enumerate() {
                 let cell_data = match cell {
+                    // TODO: Boolean cells in excel can be returned as a float or maybe even an int
                     Data::Bool(val) =>  PrimTypeData::Bool(val.to_owned()),
                     Data::DateTime(val) => {
                         let (y, m, d, hr, min, sec, milli) = val.to_ymd_hms_milli();
@@ -73,14 +78,12 @@ impl DBReader for ExcelReader {
                         let date_time = NaiveDateTime::new(date, time);
                         PrimTypeData::DateTime(date_time)
                     },
-                    // TODO: Add more parse ruls. ISO 8601 has many valid formats.
+                    // TODO: Add more parse rules. ISO 8601 has many valid formats.
                     Data::DateTimeIso(val) => {
-                        // dbg!(&tt);
                         match NaiveDateTime::parse_from_str(val, "%Y-%m-%dT%H:%M:%S") {
                             Ok(date_time) => PrimTypeData::DateTime(date_time),
                             Err(_) => {
-                                dbg!("Error Here {} {}", ii-1, jj);
-                                let error_info = ReportInfo::new((ii-1, jj), (ii-1, jj), val.to_string(), "Failed to parse DateTimeIso".to_owned());
+                                let error_info = ReportInfo::new((ii, jj), (ii, jj), val.to_string(), "Failed to parse DateTimeIso".to_owned());
                                 self.add_issue(ReportError::FailedToParse, error_info);
                                 PrimTypeData::UnexpectedError
                             },
@@ -90,24 +93,34 @@ impl DBReader for ExcelReader {
                     Data::DurationIso(_) => {
                         PrimTypeData::DateTime(NaiveDateTime::default())
                     },
-                    Data::Empty =>  PrimTypeData::Empty,
-                    Data::Float(val) =>  PrimTypeData::Float(val.to_owned()),
-                    Data::Int(val) =>  PrimTypeData::Int(val.to_owned()),
+                    Data::Empty => {
+                        let context = format!("Empty cell at ({},{})", ii, jj);
+                        self.add_issue(ReportError::EmptyCell, ReportInfo::new((ii, jj), (ii, jj), "".to_owned(), context));
+                        PrimTypeData::Empty
+                    },
+                    Data::Float(val) => PrimTypeData::Float(val.to_owned()),
+                    Data::Int(val) => PrimTypeData::Int(val.to_owned()),
                     Data::String(val) => {
                         let val = val.trim().to_owned();
                         if val.is_empty() {
+                            let context = format!("Empty cell at ({},{})", ii, jj);
+                            self.add_issue(ReportError::EmptyCell, ReportInfo::new((ii, jj), (ii, jj), "".to_owned(), context));
                             PrimTypeData::Empty
                         } else {
                             PrimTypeData::String(val)
                         }
                     },
                     // TODO: Pass error to PrimTypeData::UnexpectedError 
-                    Data::Error(_) =>  PrimTypeData::UnexpectedError,
+                    Data::Error(_) => {
+                        let context = format!("Unexpected error at ({},{}). Could not determine data type.", ii, jj);
+                        self.add_issue(ReportError::UnexpectedError, ReportInfo::new((ii, jj), (ii, jj), "".to_owned(), context));
+                        PrimTypeData::UnexpectedError
+                    },
                 };
 
                 cells.push(Cell{
                     data: cell_data,
-                    cell_address: (ii-1, jj),
+                    cell_address: (ii, jj),
                 });
 
             }
@@ -118,12 +131,24 @@ impl DBReader for ExcelReader {
             return Err(APIError::NoData)
         }
 
-        let row_count = row_count_with_header - 1;
-
         // Determine schema from the first row
         let schema = parse_shema(&headers, rows[0].clone())?;
 
-        // TODO: check for merged cells
+        workbook.merged_regions_by_sheet(&self.sheet).iter()
+            .for_each(|(_, _, dimensions)| {
+                let (row_start, col_start) = dimensions.start;
+                let row_start = row_start - 1;
+                let start = (row_start as usize, col_start as usize);
+
+                let (row_end, col_end) = dimensions.end;
+                let row_end = row_end - 1;
+                let end = (row_end as usize, col_end as usize);
+
+                // let val = "tt".to_owned();
+                let val = rows[start.0][start.1].data.to_string();
+                let context = format!("Merged cell from {},{} to {},{}", start.0, start.1, end.0, end.1);
+                self.add_issue(ReportError::MergedCells, ReportInfo::new(start, end, val, context))
+            });
         
         self.headers = headers;
         self.data = rows;
@@ -193,6 +218,34 @@ fn parse_shema(header: &[String], row: Vec<Cell>) -> Result<Vec<SchemaInfo>, API
     Ok(schema)
 }
 
+fn remove_row<T>(range: &Range<T>, row_to_remove: usize) -> Range<T>
+where
+    T: CellType + Clone,
+{
+    let Some((start_row, start_col)) = range.start() else {
+        return range.clone();
+    };
+
+    // `used_cells()` returns relative row/col coordinates.
+    let cells = range
+        .used_cells()
+        .filter_map(|(row, col, value)| {
+            if row == row_to_remove {
+                return None;
+            }
+
+            let shifted_row = if row > row_to_remove { row - 1 } else { row };
+
+            Some(CalCell::new(
+                (start_row + shifted_row as u32, start_col + col as u32),
+                value.clone(),
+            ))
+        })
+        .collect();
+
+    Range::from_sparse(cells)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,7 +305,17 @@ mod tests {
         ));
         assert_eq!(excel_file.get_data_at(row, col).unwrap().cell_address, (row, col));
 
-        dbg!(excel_file.get_issues());
+        let issues = excel_file.get_issues();
+        let empty_cell_issues = issues.get(&ReportError::EmptyCell).unwrap();
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(empty_cell_issues.len(), 2);
+
+        assert_eq!(empty_cell_issues[0].start, (2, 2));
+        assert_eq!(empty_cell_issues[0].end, (2, 2));
+
+        assert_eq!(empty_cell_issues[1].start, (5, 1));
+        assert_eq!(empty_cell_issues[1].end, (5, 1));
     }
 
     #[test]
@@ -349,5 +412,30 @@ mod tests {
             )
         ));
         assert_eq!(excel_file.get_data_at(row, col).unwrap().cell_address, (row, col));
+    }
+
+    #[test]
+    fn merged_cells_test() {
+        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Merged_Cells.xlsx".to_owned(), "Sheet1".to_owned());
+        excel_file.read_db().unwrap();
+
+        let issues = excel_file.get_issues();
+        let merged_cell_issues = excel_file.get_issues().get(&ReportError::MergedCells).unwrap();
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(merged_cell_issues.len(), 2);
+
+        assert_eq!(merged_cell_issues[0].start, (1, 0));
+        assert_eq!(merged_cell_issues[0].end, (2, 0));
+
+        assert_eq!(merged_cell_issues[1].start, (1, 2));
+        assert_eq!(merged_cell_issues[1].end, (2, 3));
+    }
+
+    #[test]
+    fn empty_table_should_return_err() {
+        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_No_Data.xlsx".to_owned(), "Sheet1".to_owned());
+        
+        assert_eq!(excel_file.read_db(), Err(APIError::NoData));
     }
 }
