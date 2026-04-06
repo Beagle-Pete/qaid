@@ -1,11 +1,9 @@
 use std::collections::HashMap;
 
-use calamine::{Data, HeaderRow, Reader, Xlsx, open_workbook};
-use calamine::{Cell as CalCell, CellType, Range};
+use calamine::{Cell as CalCell, CellType, Data, HeaderRow, Range, Reader, Xlsx, open_workbook};
 use chrono::{Duration, NaiveDateTime, NaiveDate, NaiveTime};
 
-use crate::{domain::data_stores::DBReader};
-use crate::domain::{APIError, Cell, PrimType, PrimTypeData, ReportError, ReportInfo, SchemaInfo};
+use crate::domain::{APIError, Cell, data_stores::DBReader, Headers, PrimType, PrimTypeData, ReportError, ReportInfo, SchemaInfo};
 
 #[derive(Debug)]
 pub struct ExcelReaderBuilder {
@@ -51,8 +49,15 @@ impl DBReader for ExcelReader {
             return Err(APIError::EmptyFile)
         }
 
-        let headers = range.headers()
-        .ok_or(APIError::UnexpectedError)?;
+        // Parse headers
+        let headers = {
+            let headers_tmp = range.headers()
+            .ok_or(APIError::UnexpectedError)?;
+
+            Headers::parse(headers_tmp)?
+                .as_ref()
+                .to_owned()
+        };
 
         // Remove header from Range
         let range = remove_row(&range, 0);
@@ -448,5 +453,18 @@ mod tests {
         let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Empty.xlsx".to_owned(), "Sheet1".to_owned());
         
         assert_eq!(excel_file.read_db(), Err(APIError::EmptyFile));
+    }
+
+    #[test]
+    fn test_for_duplicate_headers() {
+        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Bad_Header.xlsx".to_owned(), "Sheet1".to_owned());
+        
+        let expected_err = crate::domain::BadHeaderInfo {
+            empty: vec![1, 7],
+            duplicate: vec!["city".to_owned(), "zipcode".to_owned()]
+        };
+        assert_eq!(excel_file.read_db(), Err(APIError::BadHeaders(expected_err)));
+
+        dbg!(&excel_file.get_issues());
     }
 }
