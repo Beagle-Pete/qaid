@@ -117,6 +117,10 @@ impl DBReader for CsvReader {
     fn get_issues(&self) -> &HashMap<ReportError, Vec<ReportInfo>> {
         &self.report
     }
+
+    fn print_data(&self) {
+        self.data.print_data();
+    }
 }
 
 fn record_to_vec(record: &StringRecord) -> Vec<String> {

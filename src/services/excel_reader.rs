@@ -192,6 +192,10 @@ impl DBReader for ExcelReader {
     fn get_issues(&self) -> &HashMap<ReportError, Vec<ReportInfo>> {
         &self.report
     }
+
+    fn print_data(&self) {
+        self.data.print_data();
+    }
 }
 
 fn parse_shema(header: &[String], row: Vec<Cell>) -> Result<Vec<SchemaInfo>, APIError> {

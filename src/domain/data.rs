@@ -12,6 +12,18 @@ impl Data{
 
         Ok(Self(data))
     }
+
+    pub fn print_data(&self) {
+        let data = &self.0;
+
+        for row in data {
+            for col in row {
+                let t = col.data.to_string();
+                print!("  {}  |", t);
+            }
+            println!()
+        }
+    }
 }
 
 impl AsRef<Vec<Vec<Cell>>> for Data {

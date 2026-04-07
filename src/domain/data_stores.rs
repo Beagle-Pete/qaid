@@ -10,6 +10,8 @@ pub trait DBReader {
     fn get_data(&self) -> &Vec<Vec<Cell>>;
 
     fn get_data_at(&self, row: usize, col: usize) -> Option<&Cell>;
+
+    fn print_data(&self);
     
     fn get_headers(&self) -> &Vec<String>;
 
