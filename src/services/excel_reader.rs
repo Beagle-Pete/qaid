@@ -463,7 +463,5 @@ mod tests {
         };
         
         assert_eq!(excel_file.read_db(), Err(APIError::BadHeaders(expected_err)));
-
-        dbg!(&excel_file.get_issues());
     }
 }
