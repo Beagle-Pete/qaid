@@ -1,18 +1,11 @@
-use std::fs::File;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fs::File,
+};
 
 use csv::{Reader, StringRecord};
 
-use crate::domain::{
-    APIError,
-    Cell,
-    data_stores::DBReader,
-    PrimType,
-    PrimTypeData,
-    ReportError,
-    ReportInfo,
-    SchemaInfo,
-};
+use crate::domain::{APIError, Cell, Data, Headers, PrimType, PrimTypeData, ReportError, ReportInfo, SchemaInfo, data_stores::DBReader};
 
 #[derive(Debug)]
 pub struct CsvReaderBuilder {
@@ -22,8 +15,8 @@ pub struct CsvReaderBuilder {
 #[derive(Debug, Default)]
 pub struct CsvReader {
     file: String,
-    headers: Vec<String>,
-    data: Vec<Vec<Cell>>,
+    headers: Headers,
+    data: Data,
     data_size: (usize, usize),
     schema: Vec<SchemaInfo>,
     report: HashMap<ReportError, Vec<ReportInfo>>,
@@ -45,10 +38,15 @@ impl DBReader for CsvReader {
         let mut rdr = Reader::from_reader(file);
 
         // Get headers
-        let headers = rdr.headers()
+        let headers = {
+            let r_headers = rdr.headers()
             .map_err(|_| APIError::FailedToRead)?;
+        
+            let vec_headers = record_to_vec(r_headers);
 
-        let headers = record_to_vec(headers);
+            Headers::parse(vec_headers)?
+        };
+
 
         // Get data
         let mut data = vec![];
@@ -71,17 +69,15 @@ impl DBReader for CsvReader {
             data.push(row_data2);
         }
 
-        if data.is_empty() {
-            return Err(APIError::NoData);
-        }
+        let data = Data::parse(data)?;
 
         // Get schema. Schema for .csv file will be all Strings
-        let schema: Vec<SchemaInfo> = headers.iter()
+        let schema: Vec<SchemaInfo> = headers.as_ref().iter()
             .map(|header| SchemaInfo::new(header.to_owned(), PrimType::String))
             .collect();
 
-        let row_count = data.len();
-        let col_count = headers.len();
+        let row_count = data.as_ref().len();
+        let col_count = headers.as_ref().len();
 
 
         self.headers = headers;
@@ -97,17 +93,18 @@ impl DBReader for CsvReader {
     }
 
     fn get_data(&self) -> &Vec<Vec<Cell>> {
-        &self.data
+        self.data.as_ref()
     }
     
     fn get_data_at(&self, row: usize, col: usize) -> Option<&Cell> {
         self.data
+            .as_ref()
             .get(row)?
             .get(col)
     }
     
     fn get_headers(&self) -> &Vec<String> {
-        &self.headers
+        self.headers.as_ref()
     }
 
     fn add_issue(&mut self, error_type: ReportError, error_info: ReportInfo) {
@@ -137,12 +134,12 @@ mod tests {
         let mut csv_file = CsvReaderBuilder::parse("tests/assets/csv_01.csv".to_owned());
         csv_file.read_db().unwrap();
 
-        assert_eq!(csv_file.headers, ["col1", "col2", "col3"]);
+        assert_eq!(csv_file.get_headers(), &["col1", "col2", "col3"]);
 
         assert_eq!(csv_file.data_size, (4, 3));
 
-        assert_eq!(csv_file.data[0][1].data, PrimTypeData::String("String1".to_owned()));
-        assert_eq!(csv_file.data[0][1].cell_address, (0, 1));
+        assert_eq!(csv_file.get_data_at(0, 1).unwrap().data, PrimTypeData::String("String1".to_owned()));
+        assert_eq!(csv_file.get_data_at(0, 1).unwrap().cell_address, (0, 1));
     }
 
     #[test]

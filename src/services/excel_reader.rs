@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use calamine::{Cell as CalCell, CellType, Data, HeaderRow, Range, Reader, Xlsx, open_workbook};
+use calamine::{Cell as CalCell, CellType, Data as CalData, HeaderRow, Range, Reader, Xlsx, open_workbook};
 use chrono::{Duration, NaiveDateTime, NaiveDate, NaiveTime};
 
-use crate::domain::{APIError, Cell, data_stores::DBReader, Headers, PrimType, PrimTypeData, ReportError, ReportInfo, SchemaInfo};
+use crate::domain::{APIError, Cell, Data, data_stores::DBReader, Headers, PrimType, PrimTypeData, ReportError, ReportInfo, SchemaInfo};
 
 #[derive(Debug)]
 pub struct ExcelReaderBuilder {
@@ -15,8 +15,8 @@ pub struct ExcelReaderBuilder {
 pub struct ExcelReader {
     db: String,
     sheet: String,
-    headers: Vec<String>,
-    data: Vec<Vec<Cell>>,
+    headers: Headers,
+    data: Data,
     data_size: (usize, usize),
     schema: Vec<SchemaInfo>,
     report: HashMap<ReportError, Vec<ReportInfo>>,
@@ -55,8 +55,6 @@ impl DBReader for ExcelReader {
             .ok_or(APIError::UnexpectedError)?;
 
             Headers::parse(headers_tmp)?
-                .as_ref()
-                .to_owned()
         };
 
         // Remove header from Range
@@ -73,8 +71,8 @@ impl DBReader for ExcelReader {
             for (jj, cell) in row.iter().enumerate() {
                 let cell_data = match cell {
                     // TODO: Boolean cells in excel can be returned as a float or maybe even an int
-                    Data::Bool(val) =>  PrimTypeData::Bool(val.to_owned()),
-                    Data::DateTime(val) => {
+                    CalData::Bool(val) =>  PrimTypeData::Bool(val.to_owned()),
+                    CalData::DateTime(val) => {
                         let (y, m, d, hr, min, sec, milli) = val.to_ymd_hms_milli();
                         let date = NaiveDate::from_ymd_opt(y as i32, m as u32, d as u32).unwrap();
 
@@ -88,7 +86,7 @@ impl DBReader for ExcelReader {
                         PrimTypeData::DateTime(date_time)
                     },
                     // TODO: Add more parse rules. ISO 8601 has many valid formats.
-                    Data::DateTimeIso(val) => {
+                    CalData::DateTimeIso(val) => {
                         match NaiveDateTime::parse_from_str(val, "%Y-%m-%dT%H:%M:%S") {
                             Ok(date_time) => PrimTypeData::DateTime(date_time),
                             Err(_) => {
@@ -99,17 +97,17 @@ impl DBReader for ExcelReader {
                         }
                     },
                     // TODO: Implement this correctly. This should be chrono::TimeDelta
-                    Data::DurationIso(_) => {
+                    CalData::DurationIso(_) => {
                         PrimTypeData::DateTime(NaiveDateTime::default())
                     },
-                    Data::Empty => {
+                    CalData::Empty => {
                         let context = format!("Empty cell at ({},{})", ii, jj);
                         self.add_issue(ReportError::EmptyCell, ReportInfo::new((ii, jj), (ii, jj), "".to_owned(), context));
                         PrimTypeData::Empty
                     },
-                    Data::Float(val) => PrimTypeData::Float(val.to_owned()),
-                    Data::Int(val) => PrimTypeData::Int(val.to_owned()),
-                    Data::String(val) => {
+                    CalData::Float(val) => PrimTypeData::Float(val.to_owned()),
+                    CalData::Int(val) => PrimTypeData::Int(val.to_owned()),
+                    CalData::String(val) => {
                         let val = val.trim().to_owned();
                         if val.is_empty() {
                             let context = format!("Empty cell at ({},{})", ii, jj);
@@ -120,7 +118,7 @@ impl DBReader for ExcelReader {
                         }
                     },
                     // TODO: Pass error to PrimTypeData::UnexpectedError 
-                    Data::Error(_) => {
+                    CalData::Error(_) => {
                         let context = format!("Unexpected error at ({},{}). Could not determine data type.", ii, jj);
                         self.add_issue(ReportError::UnexpectedError, ReportInfo::new((ii, jj), (ii, jj), "".to_owned(), context));
                         PrimTypeData::UnexpectedError
@@ -136,12 +134,10 @@ impl DBReader for ExcelReader {
             rows.push(cells);
         }
 
-        if rows.is_empty() {
-            return Err(APIError::NoData)
-        }
+        let data = Data::parse(rows.clone())?;
 
         // Determine schema from the first row
-        let schema = parse_shema(&headers, rows[0].clone())?;
+        let schema = parse_shema(headers.as_ref(), rows[0].clone())?;
 
         // Get merged cells
         workbook.merged_regions_by_sheet(&self.sheet).iter()
@@ -160,7 +156,7 @@ impl DBReader for ExcelReader {
             });
         
         self.headers = headers;
-        self.data = rows;
+        self.data = data;
         self.data_size = (row_count, col_count);
         self.schema = schema;
 
@@ -172,17 +168,18 @@ impl DBReader for ExcelReader {
     }
 
     fn get_data(&self) -> &Vec<Vec<Cell>> {
-        &self.data
+        self.data.as_ref()
     }
     
     fn get_data_at(&self, row: usize, col: usize) -> Option<&Cell> {
         self.data
+            .as_ref()
             .get(row)?
             .get(col)
     }
 
     fn get_headers(&self) -> &Vec<String> {
-        &self.headers
+        self.headers.as_ref()
     }
 
     fn add_issue(&mut self, error_type: ReportError, error_info: ReportInfo) {
@@ -227,10 +224,7 @@ fn parse_shema(header: &[String], row: Vec<Cell>) -> Result<Vec<SchemaInfo>, API
     Ok(schema)
 }
 
-fn remove_row<T>(range: &Range<T>, row_to_remove: usize) -> Range<T>
-where
-    T: CellType + Clone,
-{
+fn remove_row<T: CellType + Clone>(range: &Range<T>, row_to_remove: usize) -> Range<T> {
     let Some((start_row, start_col)) = range.start() else {
         return range.clone();
     };
@@ -264,7 +258,7 @@ mod tests {
         let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Normal_01.xlsx".to_owned(), "Sheet1".to_owned());
         excel_file.read_db().unwrap();
 
-        assert_eq!(excel_file.headers, ["PID", "Impressions", "Placements", "DateTime", "Boolean"]);
+        assert_eq!(excel_file.get_headers(), &["PID", "Impressions", "Placements", "DateTime", "Boolean"]);
         assert_eq!(excel_file.data_size, (10, 5));
 
         let (row, col) = (0, 0);
@@ -463,6 +457,7 @@ mod tests {
             empty: vec![1, 7],
             duplicate: vec!["city".to_owned(), "zipcode".to_owned()]
         };
+        
         assert_eq!(excel_file.read_db(), Err(APIError::BadHeaders(expected_err)));
 
         dbg!(&excel_file.get_issues());

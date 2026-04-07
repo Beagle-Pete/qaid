@@ -1,6 +1,6 @@
 use crate::{APIError, domain::BadHeaderInfo, utils};
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Headers(Vec<String>);
 
 impl Headers {
@@ -19,13 +19,15 @@ impl Headers {
             .collect::<Vec<usize>>();
 
         // Look for duplicate headers
-        let dup_headers = {
+        let mut dup_headers = {
             let headers_lower: Vec<String> = headers.iter()
                 .map(|header| header.to_lowercase())
                 .collect();
             
             utils::get_duplicates(&headers_lower)
         };
+
+        dup_headers.sort();
         
         if !empty_headers.is_empty() || !dup_headers.is_empty() {
             let bad_header_info = BadHeaderInfo{
