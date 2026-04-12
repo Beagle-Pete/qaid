@@ -45,15 +45,32 @@ impl Data{
                     } else {
                         match field_type.to_lowercase().as_str() {
                             "string" => PrimTypeData::String(val.to_owned()),
-                            "int" => PrimTypeData::Int({
-                                // dbg!(&headers, &field_type, &schema);
-                                val.parse::<i64>()
-                                    .unwrap_or_else(|_| panic!("Failed at ({}, {}). Header: {}, Header_type: {}, val: {}", ii, jj, &headers[jj], field_type, val))
-                            }),
-                            "float" => PrimTypeData::Float({
-                                val.parse::<f64>()
-                                    .unwrap_or_else(|_| panic!("Failed at ({}, {}). Header: {}, Header_type: {}, val: {}", ii, jj, &headers[jj], field_type, val))
-                            }),
+                            "int" => {
+                                match val.parse::<i64>() {
+                                    Ok(parsed_val) => PrimTypeData::Int(parsed_val),
+                                    Err(_) => {
+                                        let context = format!("Failed to parse to int at ({},{})", ii, jj);
+                                        report.push((
+                                            ReportError::FailedToParse,
+                                            ReportInfo::new((ii, jj), (ii, jj), val, context)
+                                        ));
+                                        PrimTypeData::UnexpectedError("Failed to parse to int".to_owned())
+                                    }
+                                }
+                            },
+                            "float" => {
+                                match val.parse::<f64>() {
+                                    Ok(parsed_val) => PrimTypeData::Float(parsed_val),
+                                    Err(_) => {
+                                        let context = format!("Failed to parse to float at ({},{})", ii, jj);
+                                        report.push((
+                                            ReportError::FailedToParse,
+                                            ReportInfo::new((ii, jj), (ii, jj), val, context)
+                                        ));
+                                        PrimTypeData::UnexpectedError("Failed to parse to float".to_owned())
+                                    }
+                                }
+                            },
                             "bool" => {
                                 // Parse to boolean. Parsing to f64 covers values inputted as an int
                                 let val_bool = match val.to_lowercase().as_str() {
@@ -69,13 +86,19 @@ impl Data{
 
                                 match val_bool {
                                     Some(val) => PrimTypeData::Bool(val),
-                                    None => PrimTypeData::UnexpectedError("Failed to parse boolean".to_owned()),
+                                    None => {
+                                        let context = format!("Failed to parse to bool at ({},{})", ii, jj);
+                                        report.push((
+                                            ReportError::FailedToParse, 
+                                            ReportInfo::new((ii, jj), (ii, jj), val, context)
+                                        ));
+                                        PrimTypeData::UnexpectedError("Failed to parse boolean".to_owned())
+                                    },
                                 }
                             },
                             "datetime" => {
                                 // TODO: Check if val can be parsed into a float. If so then convert serial number to date time
                                 let datetime = NaiveDateTime::parse_from_str(&val, "%Y-%m-%dT%H:%M:%S");
-                                dbg!(&val, &datetime);
 
                                 match datetime {
                                     Ok(dt) => PrimTypeData::DateTime(dt),
@@ -90,7 +113,14 @@ impl Data{
                                 }
                                 
                             },
-                            undefined => PrimTypeData::UnexpectedError(undefined.to_owned()),
+                            undefined => {
+                                let context = format!("Field type not supported at col {}", jj);
+                                report.push((
+                                    ReportError::UnexpectedError, 
+                                    ReportInfo::new((ii, jj), (ii, jj), val, context)
+                                ));
+                                PrimTypeData::UnexpectedError(format!("Field type not supported: {}", undefined))
+                            },
                         }
                     }
                 };
