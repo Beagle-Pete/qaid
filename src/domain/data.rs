@@ -55,26 +55,15 @@ impl Data{
                                     .unwrap_or_else(|_| panic!("Failed at ({}, {}). Header: {}, Header_type: {}, val: {}", ii, jj, &headers[jj], field_type, val))
                             }),
                             "bool" => {
-                                // Parse to boolean
+                                // Parse to boolean. Parsing to f64 covers values inputted as an int
                                 let val_bool = match val.to_lowercase().as_str() {
                                     "true" => Some(true),
                                     "false" => Some(false),
-                                    _ => {
-                                        if let Ok(num) = val.parse::<f64>() {
-                                            match num {
-                                                1.0 => Some(true),
-                                                0.0 => Some(false),
-                                                _ => None
-                                            }
-                                        } else if let Ok(num) = val.parse::<i64>() {
-                                            match num {
-                                                1 => Some(true),
-                                                0 => Some(false),
-                                                _ => None
-                                            }
-                                        } else {
-                                            None
-                                        }
+                                    _ => match val.parse::<f64>(){                                            
+                                        Ok(1.0) => Some(true),
+                                        Ok(0.0) => Some(false),
+                                        _ => None
+                                        
                                     }
                                 };
 
