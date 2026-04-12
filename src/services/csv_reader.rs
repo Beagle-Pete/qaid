@@ -5,7 +5,7 @@ use std::{
 
 use csv::{Reader, StringRecord};
 
-use crate::domain::{APIError, Cell, Data, Headers, PrimType, PrimTypeData, ReportError, ReportInfo, SchemaInfo, data_stores::DBReader};
+use crate::domain::{APIError, Cell, Data, Headers, ReportError, ReportInfo,data_stores::DBReader, schema::{FieldSchema, Schema}};
 
 #[derive(Debug)]
 pub struct CsvReaderBuilder {
@@ -15,17 +15,20 @@ pub struct CsvReaderBuilder {
 #[derive(Debug, Default)]
 pub struct CsvReader {
     file: String,
+    schema_definition: Vec<FieldSchema>,
     headers: Headers,
     data: Data,
     data_size: (usize, usize),
-    schema: Vec<SchemaInfo>,
+    // schema: Vec<SchemaInfo>,
+    schema: Schema,
     report: HashMap<ReportError, Vec<ReportInfo>>,
 }
 
 impl CsvReaderBuilder {
-    pub fn parse(file: String) -> CsvReader {
+    pub fn parse(file: String, schema_definition: Vec<FieldSchema>) -> CsvReader {
         CsvReader {
             file,
+            schema_definition,
             ..Default::default()
         }
     }
@@ -47,38 +50,41 @@ impl DBReader for CsvReader {
             Headers::parse(vec_headers)?
         };
 
+        // Get schema. Schema for .csv file will be all Strings
+        let schema = Schema::parse(self.schema_definition.clone(), &headers)?;
 
         // Get data
-        let mut data = vec![];
+        // let mut data = vec![];
+        let mut data2 = vec![];
 
         // Iterate through rows
-        for (ii, record) in rdr.records().enumerate() {
+        for record in rdr.records() {
             let row = record
                 .map_err(|_| APIError::FailedToReadCsv)?;
 
             let row_data = record_to_vec(&row);
 
-            let mut row_data2 = vec![];
-            for (jj, col) in row_data.iter().enumerate() {
-                let cell = Cell::new(
-                    PrimTypeData::String(col.to_owned()), 
-                    (ii, jj)
-                );
-                row_data2.push(cell);
+            // let mut row_data2 = vec![];
+            let mut row_data3 = vec![];
+            for col in row_data {
+                // let cell = Cell::new(
+                //     PrimTypeData::String(col.to_owned()), 
+                //     (ii, jj)
+                // );
+                // row_data2.push(cell);
+                row_data3.push(col.to_owned());
             }
-            data.push(row_data2);
+            // data.push(row_data2);
+            data2.push(row_data3);
         }
 
-        let data = Data::parse(data)?;
-
-        // Get schema. Schema for .csv file will be all Strings
-        let schema: Vec<SchemaInfo> = headers.as_ref().iter()
-            .map(|header| SchemaInfo::new(header.to_owned(), PrimType::String))
-            .collect();
+        // let data = Data::parse(data)?;
+        let (data, _) = Data::parse(data2, headers.as_ref(), schema.as_ref())?;
+        // let tt = schema.convert_into_vec(headers.as_ref(), &data2);
+        // dbg!(&tt);
 
         let row_count = data.as_ref().len();
         let col_count = headers.as_ref().len();
-
 
         self.headers = headers;
         self.data = data;
@@ -88,8 +94,8 @@ impl DBReader for CsvReader {
         Ok(())
     }
 
-    fn get_schema(&self) -> &Vec<SchemaInfo> {
-        &self.schema
+    fn get_schema(&self) -> &HashMap<String, String> {
+        self.schema.as_ref()
     }
 
     fn get_data(&self) -> &Vec<Vec<Cell>> {
@@ -133,9 +139,16 @@ fn record_to_vec(record: &StringRecord) -> Vec<String> {
 mod tests {
     use super::*;
 
+    use crate::domain::PrimTypeData;
+
     #[test]
     fn successful_csv_read() {
-        let mut csv_file = CsvReaderBuilder::parse("tests/assets/csv_01.csv".to_owned());
+        let schema = vec![
+            FieldSchema::new("col1".to_owned(), "String".to_owned()),
+            FieldSchema::new("col2".to_owned(), "String".to_owned()),
+            FieldSchema::new("col3".to_owned(), "Int".to_owned()),
+        ];
+        let mut csv_file = CsvReaderBuilder::parse("tests/assets/csv_01.csv".to_owned(), schema);
         csv_file.read_db().unwrap();
 
         assert_eq!(csv_file.get_headers(), &["col1", "col2", "col3"]);
@@ -148,23 +161,34 @@ mod tests {
 
     #[test]
     fn empty_csv_should_fail() {
-        let mut csv_file = CsvReaderBuilder::parse("tests/assets/csv_empty.csv".to_owned());
+        let schema = vec![
+            FieldSchema::new("col1".to_owned(), "String".to_owned()),
+            FieldSchema::new("col2".to_owned(), "String".to_owned()),
+            FieldSchema::new("col3".to_owned(), "Int".to_owned()),
+        ];
+        let mut csv_file = CsvReaderBuilder::parse("tests/assets/csv_empty.csv".to_owned(), schema);
         
         assert_eq!(csv_file.read_db(), Err(APIError::NoData));
     }
 
     #[test]
     fn file_does_not_exist() {
-        let mut csv_file = CsvReaderBuilder::parse("tests/assets/Non_existant_file.csv".to_owned());
+        let schema = vec![FieldSchema::default()];
+        let mut csv_file = CsvReaderBuilder::parse("tests/assets/Non_existant_file.csv".to_owned(), schema);
         
         assert_eq!(csv_file.read_db(), Err(APIError::FailedToOpen));
     }
 
     #[test]
     fn header_data_unequal_length_should_fail() {
-        let mut csv_file_01 = CsvReaderBuilder::parse("tests/assets/csv_unequal_length_01.csv".to_owned());
-        let mut csv_file_02 = CsvReaderBuilder::parse("tests/assets/csv_unequal_length_02.csv".to_owned());
-        let mut csv_file_03 = CsvReaderBuilder::parse("tests/assets/csv_unequal_length_03.csv".to_owned());
+        let schema = vec![
+            FieldSchema::new("col1".to_owned(), "String".to_owned()),
+            FieldSchema::new("col2".to_owned(), "String".to_owned()),
+            FieldSchema::new("col3".to_owned(), "Int".to_owned()),
+        ];
+        let mut csv_file_01 = CsvReaderBuilder::parse("tests/assets/csv_unequal_length_01.csv".to_owned(), schema.clone());
+        let mut csv_file_02 = CsvReaderBuilder::parse("tests/assets/csv_unequal_length_02.csv".to_owned(), schema.clone());
+        let mut csv_file_03 = CsvReaderBuilder::parse("tests/assets/csv_unequal_length_03.csv".to_owned(), schema);
 
         assert_eq!(csv_file_01.read_db(), Err(APIError::FailedToReadCsv));
         assert_eq!(csv_file_02.read_db(), Err(APIError::FailedToReadCsv));

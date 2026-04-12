@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use crate::domain::{APIError, Cell, ReportError, ReportInfo, SchemaInfo};
+use crate::domain::{APIError, Cell, ReportError, ReportInfo};
 
 pub trait DBReader {
     fn read_db(&mut self) -> Result<(), APIError>;
 
-    fn get_schema(&self) -> &Vec<SchemaInfo>;
+    fn get_schema(&self) -> &HashMap<String, String>;
 
     fn get_data(&self) -> &Vec<Vec<Cell>>;
 
