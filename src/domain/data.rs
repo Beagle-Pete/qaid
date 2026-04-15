@@ -1,16 +1,138 @@
-use crate::{APIError, domain::Cell};
+use std::collections::HashMap;
+
+use crate::{APIError, domain::{Cell, PrimTypeData, ReportError, ReportInfo}, utils::parse_date};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Data(Vec<Vec<Cell>>);
 
 impl Data{
-    pub fn parse(data: Vec<Vec<Cell>>) -> Result<Self, APIError> {
+    pub fn parse(
+        data: Vec<Vec<String>>, 
+        headers: &[String], 
+        schema: &HashMap<String, String>
+    ) -> Result<(Self, Vec<(ReportError, ReportInfo)>), APIError> {
 
         if data.is_empty() {
             return Err(APIError::NoData)
         }
 
-        Ok(Self(data))
+        let mut value_vec = vec![];
+        let mut report = vec![];
+        // Iterate through rows
+        for (ii, row) in data.iter().enumerate() {
+            
+            let mut value_row = vec![];
+            // Iterate through columns
+            for (jj, val) in row.iter().enumerate() {
+                let field_type = {
+                    match schema.get(&headers[jj]) {
+                        Some(val) => val,
+                        None => continue
+                    }
+                };
+                let val = val.trim().to_owned();
+
+                let dyn_val = {
+                    if val.is_empty() {
+                        let context = format!("Empty cell at ({},{})", ii, jj);
+                        report.push((
+                            ReportError::EmptyCell, 
+                            ReportInfo::new((ii, jj), (ii, jj), "".to_owned(), context)
+                        ));
+                        PrimTypeData::Empty
+                    } else {
+                        match field_type.to_lowercase().as_str() {
+                            "string" => PrimTypeData::String(val.to_owned()),
+                            "int" => {
+                                match val.parse::<i64>() {
+                                    Ok(parsed_val) => PrimTypeData::Int(parsed_val),
+                                    Err(_) => {
+                                        let context = format!("Failed to parse to int at ({},{})", ii, jj);
+                                        report.push((
+                                            ReportError::FailedToParse,
+                                            ReportInfo::new((ii, jj), (ii, jj), val, context)
+                                        ));
+                                        PrimTypeData::UnexpectedError("Failed to parse to int".to_owned())
+                                    }
+                                }
+                            },
+                            "float" => {
+                                match val.parse::<f64>() {
+                                    Ok(parsed_val) => PrimTypeData::Float(parsed_val),
+                                    Err(_) => {
+                                        let context = format!("Failed to parse to float at ({},{})", ii, jj);
+                                        report.push((
+                                            ReportError::FailedToParse,
+                                            ReportInfo::new((ii, jj), (ii, jj), val, context)
+                                        ));
+                                        PrimTypeData::UnexpectedError("Failed to parse to float".to_owned())
+                                    }
+                                }
+                            },
+                            "bool" => {
+                                // Parse to boolean. Parsing to f64 covers values inputted as an int
+                                let val_bool = match val.to_lowercase().as_str() {
+                                    "true" => Some(true),
+                                    "false" => Some(false),
+                                    _ => match val.parse::<f64>(){                                            
+                                        Ok(1.0) => Some(true),
+                                        Ok(0.0) => Some(false),
+                                        _ => None
+                                        
+                                    }
+                                };
+
+                                match val_bool {
+                                    Some(val) => PrimTypeData::Bool(val),
+                                    None => {
+                                        let context = format!("Failed to parse to bool at ({},{})", ii, jj);
+                                        report.push((
+                                            ReportError::FailedToParse, 
+                                            ReportInfo::new((ii, jj), (ii, jj), val, context)
+                                        ));
+                                        PrimTypeData::UnexpectedError("Failed to parse boolean".to_owned())
+                                    },
+                                }
+                            },
+                            "datetime" => {
+                                let datetime = parse_date(&val);
+
+                                match datetime {
+                                    Some(dt) => PrimTypeData::DateTime(dt),
+                                    None => {
+                                        let context = format!("Failed to parse DateTime at ({},{})", ii, jj);
+                                        report.push((
+                                            ReportError::FailedToParse, 
+                                            ReportInfo::new((ii, jj), (ii, jj), val, context)
+                                        ));
+                                        PrimTypeData::UnexpectedError("Failed to parse datetime".to_owned())
+                                    },
+                                }
+                                
+                            },
+                            undefined => {
+                                let context = format!("Field type not supported at col {}", jj);
+                                report.push((
+                                    ReportError::UnexpectedError, 
+                                    ReportInfo::new((ii, jj), (ii, jj), val, context)
+                                ));
+                                PrimTypeData::UnexpectedError(format!("Field type not supported: {}", undefined))
+                            },
+                        }
+                    }
+                };
+
+                let cell = Cell::new(
+                    dyn_val, 
+                    (ii, jj)
+                );
+
+                value_row.push(cell)
+            }
+            value_vec.push(value_row);
+        }
+        
+        Ok((Self(value_vec), report))
     }
 
     pub fn print_data(&self) {
@@ -30,4 +152,14 @@ impl AsRef<Vec<Vec<Cell>>> for Data {
     fn as_ref(&self) -> &Vec<Vec<Cell>> {
         &self.0
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DynValue {
+    String(String),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    DateTime(chrono::NaiveDateTime),
+    Undefined(String),
 }

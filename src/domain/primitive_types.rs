@@ -32,7 +32,7 @@ pub enum PrimTypeData {
     Bool(bool),
     DateTime(chrono::NaiveDateTime),
     Empty,
-    UnexpectedError,
+    UnexpectedError(String),
 }
 
 impl PrimTypeData {
@@ -44,7 +44,7 @@ impl PrimTypeData {
             PrimTypeData::Bool(_) => PrimType::Bool,
             PrimTypeData::DateTime(_) => PrimType::DateTime,
             PrimTypeData::Empty => PrimType::Empty,
-            PrimTypeData::UnexpectedError => PrimType::UnexpectedError,
+            PrimTypeData::UnexpectedError(_) => PrimType::UnexpectedError,
         }
     }
 }
@@ -58,7 +58,7 @@ impl std::fmt::Display for PrimTypeData {
             PrimTypeData::Bool(val) => write!(f, "{}", val),
             PrimTypeData::DateTime(val) => write!(f, "{}", val),
             PrimTypeData::Empty => write!(f, ""),
-            PrimTypeData::UnexpectedError => write!(f, ""),
+            PrimTypeData::UnexpectedError(val) => write!(f, "{val}"),
         }        
     }
 }

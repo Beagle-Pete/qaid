@@ -5,6 +5,7 @@ mod error;
 mod headers;
 mod primitive_types;
 mod report;
+pub mod schema;
 
 pub use cell::*;
 pub use data::*;

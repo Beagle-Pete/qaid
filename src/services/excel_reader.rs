@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use calamine::{Cell as CalCell, CellType, Data as CalData, HeaderRow, Range, Reader, Xlsx, open_workbook};
 use chrono::{Duration, NaiveDateTime, NaiveDate, NaiveTime};
 
-use crate::domain::{APIError, Cell, Data, data_stores::DBReader, Headers, PrimType, PrimTypeData, ReportError, ReportInfo, SchemaInfo};
+use crate::domain::{APIError, Cell, Data, Headers, ReportError, ReportInfo, data_stores::DBReader, schema::{FieldSchema, Schema}};
 
 #[derive(Debug)]
 pub struct ExcelReaderBuilder {
@@ -15,18 +15,20 @@ pub struct ExcelReaderBuilder {
 pub struct ExcelReader {
     db: String,
     sheet: String,
+    schema_definition: Vec<FieldSchema>,
     headers: Headers,
     data: Data,
     data_size: (usize, usize),
-    schema: Vec<SchemaInfo>,
+    schema: Schema,
     report: HashMap<ReportError, Vec<ReportInfo>>,
 }
 
 impl ExcelReaderBuilder {
-    pub fn parse(db: String, sheet: String) -> ExcelReader {
+    pub fn parse(db: String, sheet: String, schema_definition: Vec<FieldSchema>) -> ExcelReader {
         ExcelReader {
             db,
             sheet,
+            schema_definition,
             ..Default::default()
         }
     }
@@ -57,21 +59,23 @@ impl DBReader for ExcelReader {
             Headers::parse(headers_tmp)?
         };
 
+        // Parse schema
+        let schema = Schema::parse(self.schema_definition.clone(), &headers)?;
+
         // Remove header from Range
         let range = remove_row(&range, 0);
     
         let (row_count, col_count) = range.get_size();
-        let mut rows= Vec::with_capacity(row_count);
+        let mut data = Vec::with_capacity(row_count);
         
-        // Iterate through rows. Skips first row with headers
+        
+        // Iterate through rows
         for (ii, row) in range.rows().enumerate() {
-
             // Iterate through columns
             let mut cells = Vec::with_capacity(col_count);
             for (jj, cell) in row.iter().enumerate() {
                 let cell_data = match cell {
-                    // TODO: Boolean cells in excel can be returned as a float or maybe even an int
-                    CalData::Bool(val) =>  PrimTypeData::Bool(val.to_owned()),
+                    CalData::Bool(val) => val.to_string(),
                     CalData::DateTime(val) => {
                         let (y, m, d, hr, min, sec, milli) = val.to_ymd_hms_milli();
                         let date = NaiveDate::from_ymd_opt(y as i32, m as u32, d as u32).unwrap();
@@ -83,61 +87,33 @@ impl DBReader for ExcelReader {
                         let time = midnight + Duration::milliseconds(total_ms);
 
                         let date_time = NaiveDateTime::new(date, time);
-                        PrimTypeData::DateTime(date_time)
+                        date_time.format("%Y-%m-%dT%H:%M:%S").to_string()
                     },
                     // TODO: Add more parse rules. ISO 8601 has many valid formats.
-                    CalData::DateTimeIso(val) => {
-                        match NaiveDateTime::parse_from_str(val, "%Y-%m-%dT%H:%M:%S") {
-                            Ok(date_time) => PrimTypeData::DateTime(date_time),
-                            Err(_) => {
-                                let error_info = ReportInfo::new((ii, jj), (ii, jj), val.to_string(), "Failed to parse DateTimeIso".to_owned());
-                                self.add_issue(ReportError::FailedToParse, error_info);
-                                PrimTypeData::UnexpectedError
-                            },
-                        }
-                    },
+                    CalData::DateTimeIso(val) => val.to_string(),
                     // TODO: Implement this correctly. This should be chrono::TimeDelta
-                    CalData::DurationIso(_) => {
-                        PrimTypeData::DateTime(NaiveDateTime::default())
-                    },
-                    CalData::Empty => {
-                        let context = format!("Empty cell at ({},{})", ii, jj);
-                        self.add_issue(ReportError::EmptyCell, ReportInfo::new((ii, jj), (ii, jj), "".to_owned(), context));
-                        PrimTypeData::Empty
-                    },
-                    CalData::Float(val) => PrimTypeData::Float(val.to_owned()),
-                    CalData::Int(val) => PrimTypeData::Int(val.to_owned()),
-                    CalData::String(val) => {
-                        let val = val.trim().to_owned();
-                        if val.is_empty() {
-                            let context = format!("Empty cell at ({},{})", ii, jj);
-                            self.add_issue(ReportError::EmptyCell, ReportInfo::new((ii, jj), (ii, jj), "".to_owned(), context));
-                            PrimTypeData::Empty
-                        } else {
-                            PrimTypeData::String(val)
-                        }
-                    },
+                    CalData::DurationIso(val) => val.to_string(),
+                    CalData::Empty => "".to_owned(),
+                    CalData::Float(val) => val.to_string(),
+                    CalData::Int(val) => val.to_string(),
+                    CalData::String(val) => val.to_string(),
                     // TODO: Pass error to PrimTypeData::UnexpectedError 
                     CalData::Error(_) => {
                         let context = format!("Unexpected error at ({},{}). Could not determine data type.", ii, jj);
                         self.add_issue(ReportError::UnexpectedError, ReportInfo::new((ii, jj), (ii, jj), "".to_owned(), context));
-                        PrimTypeData::UnexpectedError
+                        return Err(APIError::UnexpectedError);
                     },
                 };
 
-                cells.push(Cell{
-                    data: cell_data,
-                    cell_address: (ii, jj),
-                });
-
+                cells.push(cell_data);
             }
-            rows.push(cells);
+            data.push(cells);
         }
 
-        let data = Data::parse(rows.clone())?;
-
-        // Determine schema from the first row
-        let schema = parse_shema(headers.as_ref(), rows[0].clone())?;
+        let (data, data_report) = Data::parse(data, headers.as_ref(), schema.as_ref())?;
+        for (report_error, report_info) in data_report {
+            self.add_issue(report_error, report_info);
+        }
 
         // Get merged cells
         workbook.merged_regions_by_sheet(&self.sheet).iter()
@@ -150,7 +126,7 @@ impl DBReader for ExcelReader {
                 let row_end = row_end - 1;
                 let end = (row_end as usize, col_end as usize);
 
-                let val = rows[start.0][start.1].data.to_string();
+                let val = data.as_ref()[start.0][start.1].data.to_string();
                 let context = format!("Merged cell at ({},{}) to ({},{})", start.0, start.1, end.0, end.1);
                 self.add_issue(ReportError::MergedCells, ReportInfo::new(start, end, val, context))
             });
@@ -163,8 +139,8 @@ impl DBReader for ExcelReader {
         Ok(())
     }
 
-    fn get_schema(&self) -> &Vec<SchemaInfo> {
-        &self.schema
+    fn get_schema(&self) -> &HashMap<String, String> {
+        self.schema.as_ref()
     }
 
     fn get_data(&self) -> &Vec<Vec<Cell>> {
@@ -198,36 +174,6 @@ impl DBReader for ExcelReader {
     }
 }
 
-fn parse_shema(header: &[String], row: Vec<Cell>) -> Result<Vec<SchemaInfo>, APIError> {
-    let mut schema = Vec::new();
-
-    let mut schema_is_ok = true;
-    let mut headers_with_err = vec![];
-
-    for (index, col) in row.iter().enumerate() {
-        let header_name = header[index].clone();
-        match col.data {
-            PrimTypeData::Bool(_) =>  schema.push(SchemaInfo::new(header_name, PrimType::Bool)),
-            PrimTypeData::DateTime(_) =>  schema.push(SchemaInfo::new(header_name, PrimType::DateTime)),
-            PrimTypeData::Empty =>  schema.push(SchemaInfo::new(header_name, PrimType::Empty)),
-            PrimTypeData::Float(_) =>  schema.push(SchemaInfo::new(header_name, PrimType::Float)),
-            PrimTypeData::Int(_) =>  schema.push(SchemaInfo::new(header_name, PrimType::Int)),
-            PrimTypeData::String(_) => schema.push(SchemaInfo::new(header_name, PrimType::String)),
-            PrimTypeData::UnexpectedError =>  {
-                schema_is_ok = false;
-                headers_with_err.push(header_name.clone());
-                schema.push(SchemaInfo::new(header_name, PrimType::UnexpectedError))
-            },
-        }
-    }
-
-    if !schema_is_ok {
-        return Err(APIError::SchemaParseErr(headers_with_err))
-    } 
-
-    Ok(schema)
-}
-
 fn remove_row<T: CellType + Clone>(range: &Range<T>, row_to_remove: usize) -> Range<T> {
     let Some((start_row, start_col)) = range.start() else {
         return range.clone();
@@ -257,9 +203,18 @@ fn remove_row<T: CellType + Clone>(range: &Range<T>, row_to_remove: usize) -> Ra
 mod tests {
     use super::*;
 
+    use crate::domain::PrimTypeData;
+
     #[test]
     fn successful_excel_read() {
-        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Normal_01.xlsx".to_owned(), "Sheet1".to_owned());
+        let schema = vec![
+            FieldSchema::new("PID".to_owned(), "String".to_owned()),
+            FieldSchema::new("Impressions".to_owned(), "Int".to_owned()),
+            FieldSchema::new("Placements".to_owned(), "String".to_owned()),
+            FieldSchema::new("DateTime".to_owned(), "DateTime".to_owned()),
+            FieldSchema::new("Boolean".to_owned(), "Bool".to_owned()),
+        ];
+        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Normal_01.xlsx".to_owned(), "Sheet1".to_owned(), schema);
         excel_file.read_db().unwrap();
 
         assert_eq!(excel_file.get_headers(), &["PID", "Impressions", "Placements", "DateTime", "Boolean"]);
@@ -270,7 +225,7 @@ mod tests {
         assert_eq!(excel_file.get_data_at(row, col).unwrap().cell_address, (row, col));
 
         let (row, col) = (2, 1);
-        assert_eq!(excel_file.get_data_at(row, col).unwrap().data, PrimTypeData::Float(34_f64));
+        assert_eq!(excel_file.get_data_at(row, col).unwrap().data, PrimTypeData::Int(34));
         
         let (row, col) = (2, 4);
         assert_eq!(excel_file.get_data_at(row, col).unwrap().data, PrimTypeData::Bool(false));
@@ -327,7 +282,10 @@ mod tests {
 
     #[test]
     fn datatimeiso_test() {
-        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_DateTimeIso.xlsx".to_owned(), "Sheet1".to_owned());
+        let schema = vec![
+            FieldSchema::new("DateTimeIso".to_owned(), "DateTime".to_owned()),
+        ];
+        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_DateTimeIso.xlsx".to_owned(), "Sheet1".to_owned(), schema);
         excel_file.read_db().unwrap();
 
         let (row, col) = (0, 0);
@@ -423,7 +381,14 @@ mod tests {
 
     #[test]
     fn merged_cells_test() {
-        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Merged_Cells.xlsx".to_owned(), "Sheet1".to_owned());
+        let schema = vec![
+            FieldSchema::new("PID".to_owned(), "String".to_owned()),
+            FieldSchema::new("Impressions".to_owned(), "Int".to_owned()),
+            FieldSchema::new("Placements".to_owned(), "String".to_owned()),
+            FieldSchema::new("DateTime".to_owned(), "DateTime".to_owned()),
+            FieldSchema::new("Boolean".to_owned(), "Bool".to_owned()),
+        ];
+        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Merged_Cells.xlsx".to_owned(), "Sheet1".to_owned(), schema);
         excel_file.read_db().unwrap();
 
         let issues = excel_file.get_issues();
@@ -441,21 +406,37 @@ mod tests {
 
     #[test]
     fn file_without_data_should_return_err() {
-        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_No_Data.xlsx".to_owned(), "Sheet1".to_owned());
+        let schema = vec![
+            FieldSchema::new("ID".to_owned(), "String".to_owned()),
+            FieldSchema::new("City".to_owned(), "String".to_owned()),
+            FieldSchema::new("State".to_owned(), "String".to_owned()),
+            FieldSchema::new("Zip Code".to_owned(), "String".to_owned()),
+        ];
+        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_No_Data.xlsx".to_owned(), "Sheet1".to_owned(), schema);
         
         assert_eq!(excel_file.read_db(), Err(APIError::NoData));
     }
 
     #[test]
     fn empty_table_should_return_err() {
-        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Empty.xlsx".to_owned(), "Sheet1".to_owned());
+        let schema = vec![
+            FieldSchema::new("col1".to_owned(), "String".to_owned()),
+            FieldSchema::new("col2".to_owned(), "String".to_owned()),
+            FieldSchema::new("col3".to_owned(), "Int".to_owned()),
+        ];
+        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Empty.xlsx".to_owned(), "Sheet1".to_owned(), schema);
         
         assert_eq!(excel_file.read_db(), Err(APIError::EmptyFile));
     }
 
     #[test]
     fn test_for_duplicate_headers() {
-        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Bad_Header.xlsx".to_owned(), "Sheet1".to_owned());
+        let schema = vec![
+            FieldSchema::new("col1".to_owned(), "String".to_owned()),
+            FieldSchema::new("col2".to_owned(), "String".to_owned()),
+            FieldSchema::new("col3".to_owned(), "Int".to_owned()),
+        ];
+        let mut excel_file = ExcelReaderBuilder::parse("tests/assets/Excel_Bad_Header.xlsx".to_owned(), "Sheet1".to_owned(), schema);
         
         let expected_err = crate::domain::BadHeaderInfo {
             empty: vec![1, 7],
