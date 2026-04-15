@@ -54,8 +54,7 @@ impl DBReader for CsvReader {
         let schema = Schema::parse(self.schema_definition.clone(), &headers)?;
 
         // Get data
-        // let mut data = vec![];
-        let mut data2 = vec![];
+        let mut data = vec![];
 
         // Iterate through rows
         for record in rdr.records() {
@@ -64,24 +63,17 @@ impl DBReader for CsvReader {
 
             let row_data = record_to_vec(&row);
 
-            // let mut row_data2 = vec![];
             let mut row_data3 = vec![];
             for col in row_data {
-                // let cell = Cell::new(
-                //     PrimTypeData::String(col.to_owned()), 
-                //     (ii, jj)
-                // );
-                // row_data2.push(cell);
                 row_data3.push(col.to_owned());
             }
-            // data.push(row_data2);
-            data2.push(row_data3);
+            data.push(row_data3);
         }
 
-        // let data = Data::parse(data)?;
-        let (data, _) = Data::parse(data2, headers.as_ref(), schema.as_ref())?;
-        // let tt = schema.convert_into_vec(headers.as_ref(), &data2);
-        // dbg!(&tt);
+        let (data, data_report) = Data::parse(data, headers.as_ref(), schema.as_ref())?;
+        for (report_error, report_info) in data_report {
+            self.add_issue(report_error, report_info);
+        }
 
         let row_count = data.as_ref().len();
         let col_count = headers.as_ref().len();
@@ -137,6 +129,8 @@ fn record_to_vec(record: &StringRecord) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+
     use super::*;
 
     use crate::domain::PrimTypeData;
@@ -157,6 +151,41 @@ mod tests {
 
         assert_eq!(csv_file.get_data_at(0, 1).unwrap().data, PrimTypeData::String("String1".to_owned()));
         assert_eq!(csv_file.get_data_at(0, 1).unwrap().cell_address, (0, 1));
+    }
+
+    #[test]
+    fn successful_csv_read_2() {
+        let schema = vec![
+            FieldSchema::new("PID".to_owned(), "String".to_owned()),
+            FieldSchema::new("Impressions".to_owned(), "Float".to_owned()),
+            FieldSchema::new("Placements".to_owned(), "String".to_owned()),
+            FieldSchema::new("DateTime".to_owned(), "DateTime".to_owned()),
+            FieldSchema::new("Boolean".to_owned(), "Bool".to_owned()),
+        ];
+        let mut csv_file = CsvReaderBuilder::parse("tests/assets/csv_02.csv".to_owned(), schema);
+        csv_file.read_db().unwrap();
+
+        assert_eq!(csv_file.get_headers(), &["PID", "Impressions", "Placements", "DateTime", "Boolean"]);
+
+        assert_eq!(csv_file.data_size, (10, 5));
+
+        assert_eq!(csv_file.get_data_at(0, 1).unwrap().data, PrimTypeData::Float(2.0));
+        assert_eq!(csv_file.get_data_at(0, 1).unwrap().cell_address, (0, 1));
+
+        let (row, col) = (9, 2);
+        assert_eq!(
+            csv_file.get_data_at(row, col).unwrap().data, 
+            PrimTypeData::String("As the rental car rolled to a stop on the dark road, her fear increased by the moment.".to_owned())
+        );
+        
+        let (row, col) = (0, 3);
+        assert_eq!(csv_file.get_data_at(row, col).unwrap().data, PrimTypeData::DateTime(
+            NaiveDateTime::new(
+                NaiveDate::from_ymd_opt(2026, 1, 2).unwrap(), 
+                NaiveTime::from_hms_micro_opt(0, 0, 0, 0).unwrap()
+            )
+        ));
+        assert_eq!(csv_file.get_data_at(row, col).unwrap().cell_address, (row, col));
     }
 
     #[test]

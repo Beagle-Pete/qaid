@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::NaiveDateTime;
-
-use crate::{APIError, domain::{Cell, PrimTypeData, ReportError, ReportInfo}};
+use crate::{APIError, domain::{Cell, PrimTypeData, ReportError, ReportInfo}, utils::parse_date};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Data(Vec<Vec<Cell>>);
@@ -97,12 +95,11 @@ impl Data{
                                 }
                             },
                             "datetime" => {
-                                // TODO: Check if val can be parsed into a float. If so then convert serial number to date time
-                                let datetime = NaiveDateTime::parse_from_str(&val, "%Y-%m-%dT%H:%M:%S");
+                                let datetime = parse_date(&val);
 
                                 match datetime {
-                                    Ok(dt) => PrimTypeData::DateTime(dt),
-                                    Err(_) => {
+                                    Some(dt) => PrimTypeData::DateTime(dt),
+                                    None => {
                                         let context = format!("Failed to parse DateTime at ({},{})", ii, jj);
                                         report.push((
                                             ReportError::FailedToParse, 

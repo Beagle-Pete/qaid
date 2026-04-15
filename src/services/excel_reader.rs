@@ -74,13 +74,11 @@ impl DBReader for ExcelReader {
             // Iterate through columns
             let mut cells = Vec::with_capacity(col_count);
             for (jj, cell) in row.iter().enumerate() {
-                // dbg!(&ii, &jj, &cell);
                 let cell_data = match cell {
                     CalData::Bool(val) => val.to_string(),
                     CalData::DateTime(val) => {
                         let (y, m, d, hr, min, sec, milli) = val.to_ymd_hms_milli();
                         let date = NaiveDate::from_ymd_opt(y as i32, m as u32, d as u32).unwrap();
-                        // dbg!(&date);
 
                         // Add up time as milliseconds and add to midnight to avoid rounding errors
                         let total_ms = hr as i64 * 3_600_000 + min as i64 * 60_000 + sec as i64 * 1_000 + milli as i64;
@@ -112,8 +110,8 @@ impl DBReader for ExcelReader {
             data.push(cells);
         }
 
-        let (data, report_tmp) = Data::parse(data, headers.as_ref(), schema.as_ref())?;
-        for (report_error, report_info) in report_tmp {
+        let (data, data_report) = Data::parse(data, headers.as_ref(), schema.as_ref())?;
+        for (report_error, report_info) in data_report {
             self.add_issue(report_error, report_info);
         }
 
@@ -271,7 +269,6 @@ mod tests {
 
         let issues = excel_file.get_issues();
         let empty_cell_issues = issues.get(&ReportError::EmptyCell).unwrap();
-        dbg!(&empty_cell_issues);
 
         assert_eq!(issues.len(), 1);
         assert_eq!(empty_cell_issues.len(), 2);
@@ -396,26 +393,15 @@ mod tests {
 
         let issues = excel_file.get_issues();
         let merged_cell_issues = excel_file.get_issues().get(&ReportError::MergedCells).unwrap();
-        let parse_issues = excel_file.get_issues().get(&ReportError::FailedToParse).unwrap();
 
-        assert_eq!(issues.len(), 2);
+        assert_eq!(issues.len(), 1);
         assert_eq!(merged_cell_issues.len(), 2);
-        assert_eq!(parse_issues.len(), 2);
 
         assert_eq!(merged_cell_issues[0].start, (1, 0));
         assert_eq!(merged_cell_issues[0].end, (2, 0));
 
         assert_eq!(merged_cell_issues[1].start, (1, 2));
         assert_eq!(merged_cell_issues[1].end, (2, 3));
-
-        // Date times that are in serial numbers are not covered yet
-        assert_eq!(parse_issues[0].start, (1, 3));
-        assert_eq!(parse_issues[0].end, (1, 3));
-        assert_eq!(parse_issues[0].val, "45661.2916666667".to_owned());
-
-        assert_eq!(parse_issues[1].start, (2, 3));
-        assert_eq!(parse_issues[1].end, (2, 3));
-        assert_eq!(parse_issues[1].val, "45878".to_owned());
     }
 
     #[test]
